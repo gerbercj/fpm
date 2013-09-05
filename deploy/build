@@ -1,0 +1,5 @@
+#!/bin/bash -ex
+
+gem build *.gemspec
+
+for f in *.gem; do cp "$f" "`echo "$f" | sed 's/^\([^-]*\).*/\1.gem/'`"; done
