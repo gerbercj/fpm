@@ -12,13 +12,13 @@ require "digest"
 # This class only supports output of packages.
 #
 # The sh package is a single sh file with a bzipped tar payload concatenated to the end.
-# The script can unpack the tarball to install it and call optional post install scripts. 
+# The script can unpack the tarball to install it and call optional post install scripts.
 class FPM::Package::Sh < FPM::Package
-  
+
   def output(output_path)
     create_scripts
 
-    # Make one file. The installscript can unpack itself. 
+    # Make one file. The installscript can unpack itself.
     `cat #{install_script} #{payload} > #{output_path}`
     FileUtils.chmod("+x", output_path)
   end
@@ -34,30 +34,30 @@ class FPM::Package::Sh < FPM::Package
       File.write(File.join(fpm_meta_path, "after_install"), script(:after_install))
     end
   end
-  
+
   def install_script
     path = build_path("installer.sh")
     File.open(path, "w") do |file|
-      file.write template("sh.erb").result(binding) 
+      file.write template("sh.erb").result(binding)
     end
     path
   end
-  
+
   # Returns the path to the tar file containing the packed up staging directory
   def payload
-    payload_tar = build_path("payload.tar.gz")
+    payload_tar = build_path("payload.tar")
     @logger.info("Creating payload tar ", :path => payload_tar)
 
     args = [ tar_cmd,
              "-C",
              staging_path,
-             "-jcf",
+             "-cf",
              payload_tar,
              "--owner=0",
              "--group=0",
              "--numeric-owner",
              "." ]
-    
+
     unless safesystem(*args)
       raise "Command failed while creating payload tar: #{args}"
     end

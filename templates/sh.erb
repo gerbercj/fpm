@@ -4,8 +4,8 @@
 set -e
 
 # This is the self-extracting installer script for an FPM shell installer package.
-# It contains the logic to unpack a tar bzipped archive appended to the end of this script
-# and optionally run post install logic.
+# It contains the logic to unpack a tar archive appended to the end of this script
+# and, optionally, to run post install logic.
 # Run the package file with -h to see a usage message or look at the print_usage method.
 #
 # The post install scripts are called with INSTALL_ROOT, INSTALL_DIR and VERBOSE exported
@@ -69,7 +69,7 @@ function wait_for_others(){
     fi
 }
 
-# kills other running slug installations
+# kills other running installations
 function kill_others(){
     for PID_FILE in $(ls ${INSTALL_DIR}/*.pid) ; do
         local p=`cat ${PID_FILE}`
@@ -85,7 +85,7 @@ function fpm_metadata_file(){
     echo "${INSTALL_ROOT}/.install-metadata"
 }
 
-# if this slug was installed at this location already we will find a metadata file with the details
+# if this package was installed at this location already we will find a metadata file with the details
 # about the installation that we left here. Load from that if available but allow command line args to trump
 function load_environment(){
     local METADATA=$(fpm_metadata_file)
@@ -150,8 +150,8 @@ function set_owner(){
 function unpack_payload(){
     if $FORCE || [ ! "$(ls -A $INSTALL_DIR)" ] ; then
         log "Unpacking payload . . ."
-        local archive_line=$(egrep --text --line-number '__ARCHIVE__$' $0 | cut -f1 -d:)
-        tail -n +$((archive_line + 1)) $0 | tar -C $INSTALL_DIR -xjf - > /dev/null || die "Failed to unpack payload from the end of '$0' into '$INSTALL_DIR'"
+        local archive_line=$(grep -a -n -m1 '__ARCHIVE__$' $0 | sed 's/:.*//')
+        tail -n +$((archive_line + 1)) $0 | tar -C $INSTALL_DIR -xf - > /dev/null || die "Failed to unpack payload from the end of '$0' into '$INSTALL_DIR'"
     else
         # Files are already here, just move symlinks
         log "Directory already exists and has contents ($INSTALL_DIR). Not unpacking payload."
@@ -211,13 +211,13 @@ function print_usage(){
     echo "  -i <DIRECTORY> : install_root - an optional directory to install to."
     echo "      Default is package file name without file extension"
     echo "  -o <USER>     : owner - the name of the user that will own the files installed"
-    echo "                   by the slug. Defaults to current user"
+    echo "                   by the package. Defaults to current user"
     echo "  -r: disable capistrano style release directories - Default behavior is to create a releases directory inside"
     echo "      install_root and unpack contents into a date stamped (or build time id named) directory under the release"
     echo "      directory. Then create a 'current' symlink under install_root to the unpacked"
     echo "      directory once installation is complete replacing the symlink if it already "
     echo "      exists. If this flag is set just install into install_root directly"
-    echo "  -u: Unpack the slug, but do not install / symlink new payload"
+    echo "  -u: Unpack the package, but do not install and symlink the payload"
     echo "  -f: force - Always overwrite existing installations"
     echo "  -y: yes - Don't prompt to clobber existing installations"
     echo "  -v: verbose - More output on installation"

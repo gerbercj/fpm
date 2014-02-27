@@ -1,3 +1,3 @@
 module FPM
-  VERSION = "0.4.52"
+  VERSION = "1.1.0"
 end
