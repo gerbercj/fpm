@@ -1,10 +1,22 @@
 from distutils.core import Command
 import os
+import sys
 import pkg_resources
 try:
     import json
 except ImportError:
     import simplejson as json
+
+PY3 = sys.version_info[0] == 3
+
+if PY3:
+    def u(s):
+        return s
+else:
+    def u(s):
+        if isinstance(u, unicode):
+            return u
+        return s.decode('utf-8')
 
 
 # Note, the last time I coded python daily was at Google, so it's entirely
@@ -17,12 +29,14 @@ class get_metadata(Command):
     user_options = [
         ('load-requirements-txt', 'l',
          "load dependencies from requirements.txt"),
-        ]
+        ("output=", "o", "output destination for metadata json")
+    ]
     boolean_options = ['load-requirements-txt']
 
     def initialize_options(self):
         self.load_requirements_txt = False
         self.cwd = None
+        self.output = None
 
     def finalize_options(self):
         self.cwd = os.getcwd()
@@ -46,9 +60,9 @@ class get_metadata(Command):
         data = {
             "name": self.distribution.get_name(),
             "version": self.distribution.get_version(),
-            "author": "%s <%s>" % (
-                self.distribution.get_author(),
-                self.distribution.get_author_email(),
+            "author": u("%s <%s>") % (
+                u(self.distribution.get_author()),
+                u(self.distribution.get_author_email()),
             ),
             "description": self.distribution.get_description(),
             "license": self.distribution.get_license(),
@@ -74,8 +88,9 @@ class get_metadata(Command):
 
         data["dependencies"] = final_deps
 
+        output = open(self.output, "w")
         if hasattr(json, 'dumps'):
-            print(json.dumps(data, indent=2))
+            output.write(json.dumps(data, indent=2))
         else:
             # For Python 2.5 and Debian's python-json
-            print(json.write(data))
+            output.write(json.write(data))

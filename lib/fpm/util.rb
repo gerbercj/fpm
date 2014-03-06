@@ -7,11 +7,13 @@ module FPM::Util
   extend FFI::Library
   ffi_lib FFI::Library::LIBC
 
-  # mknod is __xmknod in glibc
+  # mknod is __xmknod in glibc a wrapper around mknod to handle
+  # various stat struct formats. See bits/stat.h in glibc source
   begin
-    attach_function :mknod, :mknod, [:string, :uint32, :ulong], :int
+    attach_function :mknod, :mknod, [:string, :uint, :ulong], :int
   rescue FFI::NotFoundError
-    attach_function :mknod, :__xmknod, [:string, :uint32, :ulong], :int
+    # glibc/io/xmknod.c int __xmknod (int vers, const char *path, mode_t mode, dev_t *dev)
+    attach_function :xmknod, :__xmknod, [:int, :string, :uint, :pointer], :int
   end
 
   # Raised if safesystem cannot find the program to run.
@@ -28,18 +30,29 @@ module FPM::Util
     return envpath.select { |p| File.executable?(File.join(p, program)) }.any?
   end # def program_in_path
 
+  def program_exists?(program)
+    # Scan path to find the executable
+    # Do this to help the user get a better error message.
+    return program_in_path?(program) if !program.include?("/") 
+    return File.executable?(program)
+  end # def program_exists?
+
+  def default_shell
+    shell = ENV["SHELL"] 
+    return "/bin/sh" if shell.nil? || shell.empty?
+    return shell
+  end
+
   # Run a command safely in a way that gets reports useful errors.
   def safesystem(*args)
     # ChildProcess isn't smart enough to run a $SHELL if there's
     # spaces in the first arg and there's only 1 arg.
     if args.size == 1
-      args = [ ENV["SHELL"], "-c", args[0] ]
+      args = [ default_shell, "-c", args[0] ]
     end
     program = args[0]
 
-    # Scan path to find the executable
-    # Do this to help the user get a better error message.
-    if !program.include?("/") and !program_in_path?(program)
+    if !program_exists?(program)
       raise ExecutableNotFound.new(program)
     end
 
@@ -57,7 +70,9 @@ module FPM::Util
     process.start
     stdout_w.close; stderr_w.close
     @logger.debug('Process is running', :pid => process.pid)
-    @logger.pipe(stdout_r => :info, stderr_r => :error)
+    # Log both stdout and stderr as 'info' because nobody uses stderr for
+    # actually reporting errors and as a result 'stderr' is a misnomer.
+    @logger.pipe(stdout_r => :info, stderr_r => :info)
 
     process.wait
     success = (process.exit_code == 0)
@@ -69,7 +84,7 @@ module FPM::Util
     return success
   end # def safesystem
 
-# Run a command safely in a way that captures output and status.
+  # Run a command safely in a way that captures output and status.
   def safesystemout(*args)
     if args.size == 1
       args = [ ENV["SHELL"], "-c", args[0] ]
@@ -113,7 +128,11 @@ module FPM::Util
     when "SunOS"
       return "gtar"
     when "Darwin"
-      return "gnutar"
+      # Try running gnutar, it was renamed(??) in homebrew to 'gtar' at some point, I guess? I don't know.
+      ["gnutar", "gtar"].each do |tar|
+        system("#{tar} > /dev/null 2> /dev/null")
+        return tar unless $?.exitstatus == 127
+      end
     else
       return "tar"
     end
@@ -125,15 +144,27 @@ module FPM::Util
     block.call(value)
   end # def with
 
+  # wrapper around mknod ffi calls
+  def mknod_w(path, mode, dev)
+    rc = -1
+    case %x{uname -s}.chomp
+    when 'Linux'
+      # bits/stat.h #define _MKNOD_VER_LINUX  0
+      rc = xmknod(0, path, mode, FFI::MemoryPointer.new(dev))
+    else
+      rc = mknod(path, mode, dev)
+    end
+    rc
+  end
+
   def copy_entry(src, dst)
     case File.ftype(src)
-    when 'fifo'
-    when 'characterSpecial'
-    when 'blockSpecial'
-    when 'socket'
+    when 'fifo', 'characterSpecial', 'blockSpecial', 'socket'
       st = File.stat(src)
-      rc = mknod(dst, st.mode, st.dev)
+      rc = mknod_w(dst, st.mode, st.dev)
       raise SystemCallError.new("mknod error", FFI.errno) if rc == -1
+    when 'directory'
+      FileUtils.mkdir(dst) unless File.exists? dst
     else
       FileUtils.copy_entry(src, dst)
     end

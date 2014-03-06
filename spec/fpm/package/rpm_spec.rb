@@ -3,8 +3,9 @@ require "fpm" # local
 require "fpm/package/rpm" # local
 require "fpm/package/dir" # local
 require "arr-pm/file" # gem 'arr-pm'
+require "stud/temporary" # gem 'stud'
 
-if !program_in_path?("rpmbuild")
+if !program_exists?("rpmbuild")
   Cabin::Channel.get("rspec") \
     .warn("Skipping RPM#output tests because 'rpmbuild' isn't in your PATH")
 end
@@ -64,7 +65,7 @@ describe FPM::Package::RPM do
 
   describe "#templating" do
     context "default user and group" do
-      before :all do
+      before :each do
         FileUtils.mkdir_p(subject.staging_path(File.dirname(__FILE__)))
         FileUtils.cp(__FILE__, subject.staging_path(__FILE__))
 
@@ -75,7 +76,7 @@ describe FPM::Package::RPM do
         subject.render_template
       end
 
-      after :all do
+      after :each do
         subject.cleanup
       end
 
@@ -85,7 +86,7 @@ describe FPM::Package::RPM do
     end # context
 
     context "non-default user and group" do
-      before :all do
+      before :each do
         subject.attributes[:rpm_user] = "some_user"
         subject.attributes[:rpm_group] = "some_group"
 
@@ -99,7 +100,7 @@ describe FPM::Package::RPM do
         subject.render_template
       end
 
-      after :all do
+      after :each do
         subject.cleanup
       end
 
@@ -109,11 +110,10 @@ describe FPM::Package::RPM do
     end # context
   end
 
-  describe "#output", :if => program_in_path?("rpmbuild") do
+  describe "#output", :if => program_exists?("rpmbuild") do
     context "package attributes" do
-      before :all do
-        @target = Tempfile.new("fpm-test-rpm").path
-        File.delete(@target)
+      before :each do
+        @target = Stud::Temporary.pathname
         subject.name = "name"
         subject.version = "123"
         subject.architecture = "all"
@@ -144,12 +144,12 @@ describe FPM::Package::RPM do
         @rpm.header.tags.each do |tag|
           @rpmtags[tag.tag] = tag.value
         end
-      end # before :all
+      end # before :each
 
-      after :all do
+      after :each do
         subject.cleanup
         File.delete(@target)
-      end # after :all
+      end # after :each
 
       it "should have the correct name" do
         insist { @rpmtags[:name] } == subject.name
@@ -241,9 +241,8 @@ describe FPM::Package::RPM do
     end # package attributes
 
     context "package default attributes" do
-      before :all do
-        @target = Tempfile.new("fpm-test-rpm").path
-        File.delete(@target)
+      before :each do
+        @target = Stud::Temporary.pathname
         subject.name = "name"
         subject.version = "123"
         # Write the rpm out
@@ -256,12 +255,12 @@ describe FPM::Package::RPM do
         @rpm.header.tags.each do |tag|
           @rpmtags[tag.tag] = tag.value
         end
-      end # before :all
+      end # before :each
 
-      after :all do
+      after :each do
         subject.cleanup
         File.delete(@target)
-      end # after :all
+      end # after :each
 
       it "should have the correct name" do
         insist { @rpmtags[:name] } == subject.name
@@ -313,10 +312,10 @@ describe FPM::Package::RPM do
     end # package attributes
   end # #output
 
-  describe "regressions should not occur", :if => program_in_path?("rpmbuild") do
+  describe "regressions should not occur", :if => program_exists?("rpmbuild") do
     before :each do
-      @target = Tempfile.new("fpm-test-rpm").path
-      File.delete(@target)
+      @tempfile_handle = 
+      @target = Stud::Temporary.pathname
       subject.name = "name"
       subject.version = "1.23"
     end
@@ -333,6 +332,18 @@ describe FPM::Package::RPM do
 
       rpm = ::RPM::File.new(@target)
       insist { rpm.files } == [ "/example/%name%" ]
+    end
+
+    it "should escape '%' characters in filenames while preserving permissions" do
+      Dir.mkdir(subject.staging_path("/example"))
+      File.write(subject.staging_path("/example/%name%"), "Hello")
+      File.chmod(01777,subject.staging_path("/example/%name%"))
+      subject.attributes[:rpm_use_file_permissions?] = true
+      subject.output(@target)
+
+      rpm = ::RPM::File.new(@target)
+      insist { rpm.files } == [ "/example/%name%" ]
+      insist { `rpm -qlv -p #{@target}`.chomp.split.first } == "-rwxrwxrwt"
     end
 
     it "should permit spaces in filenames (issue #164)" do
@@ -381,11 +392,10 @@ describe FPM::Package::RPM do
     end
   end # regression stuff
 
-  describe "#output with digest and compression settings", :if => program_in_path?("rpmbuild") do
+  describe "#output with digest and compression settings", :if => program_exists?("rpmbuild") do
     context "bzip2/sha1" do
-      before :all do
-        @target = Tempfile.new("fpm-test-rpm").path
-        File.delete(@target)
+      before :each do
+        @target = Stud::Temporary.pathname
         subject.name = "name"
         subject.version = "123"
         subject.architecture = "all"
@@ -406,7 +416,7 @@ describe FPM::Package::RPM do
         end
       end
 
-      after :all do
+      after :each do
         subject.cleanup
         File.delete(@target)
       end # after

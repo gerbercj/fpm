@@ -6,7 +6,7 @@ require "fpm/package/dir" # local
 describe FPM::Package::Deb do
   # dpkg-deb lets us query deb package files. 
   # Comes with debian and ubuntu systems.
-  have_dpkg_deb = program_in_path?("dpkg-deb")
+  have_dpkg_deb = program_exists?("dpkg-deb")
   if !have_dpkg_deb
     Cabin::Channel.get("rspec") \
       .warn("Skipping some deb tests because 'dpkg-deb' isn't in your PATH")
@@ -29,7 +29,7 @@ describe FPM::Package::Deb do
 
     it "should default to native" do
       expected = ""
-      if program_in_path?("dpkg")
+      if program_exists?("dpkg")
         expected = %x{dpkg --print-architecture}.chomp
       end
 
@@ -120,7 +120,10 @@ describe FPM::Package::Deb do
       @original.architecture = "all"
       @original.dependencies << "something > 10"
       @original.dependencies << "hello >= 20"
-      @original.provides = "#{@original.name} = #{@original.version}"
+      @original.provides << "#{@original.name} = #{@original.version}"
+
+      # Test to cover PR#591 (fix provides names)
+      @original.provides << "Some-SILLY_name"
 
       @original.conflicts = ["foo < 123"]
       @original.attributes[:deb_breaks] = ["baz < 123"]
@@ -169,7 +172,11 @@ describe FPM::Package::Deb do
 
       it "should ignore versions and conditions in 'provides' (#280)" do
         # Provides is an array because rpm supports multiple 'provides'
-        insist { @input.provides } == [ @original.name ]
+        insist { @input.provides }.include?(@original.name)
+      end
+
+      it "should fix capitalization and underscores-to-dashes (#591)" do
+        insist { @input.provides }.include?("some-silly-name")
       end
     end # package attributes
 

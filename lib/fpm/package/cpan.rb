@@ -8,12 +8,24 @@ class FPM::Package::CPAN < FPM::Package
   # Flags '--foo' will be accessable  as attributes[:npm_foo]
   option "--perl-bin", "PERL_EXECUTABLE",
     "The path to the perl executable you wish to run.", :default => "perl"
+
   option "--cpanm-bin", "CPANM_EXECUTABLE",
     "The path to the cpanm executable you wish to run.", :default => "cpanm"
-  option "--package-name-prefix", "NAME_PREFIX", "Name to prefix the package " \
-    "name with.", :default => "perl"
-  option "--test", :flag, "Run the tests before packaging?", :default => true
-  option "--perl-lib-path", "PERL_LIB_PATH", "Path of target Perl Libraries"
+
+  option "--mirror", "CPAN_MIRROR",
+    "The CPAN mirror to use instead of the default."
+
+  option "--mirror-only", :flag,
+    "Only use the specified mirror for metadata.", :default => false
+
+  option "--package-name-prefix", "NAME_PREFIX",
+    "Name to prefix the package name with.", :default => "perl"
+
+  option "--test", :flag,
+    "Run the tests before packaging?", :default => true
+
+  option "--perl-lib-path", "PERL_LIB_PATH",
+    "Path of target Perl Libraries"
 
   private
   def input(package)
@@ -28,9 +40,13 @@ class FPM::Package::CPAN < FPM::Package
     require "net/http"
     require "json"
 
-    result = search(package)
-    tarball = download(result)
-    moduledir = unpack(tarball)
+    if (attributes[:cpan_local_module?])
+      moduledir = package
+    else
+      result = search(package)
+      tarball = download(result, version)
+      moduledir = unpack(tarball)
+    end
 
     # Read package metadata (name, version, etc)
     if File.exists?(File.join(moduledir, "META.json"))
@@ -38,6 +54,11 @@ class FPM::Package::CPAN < FPM::Package
     elsif File.exists?(File.join(moduledir, ("META.yml")))
       require "yaml"
       metadata = YAML.load_file(File.join(moduledir, ("META.yml")))
+    elsif File.exists?(File.join(moduledir, "MYMETA.json"))
+      metadata = JSON.parse(File.read(File.join(moduledir, ("MYMETA.json"))))
+    elsif File.exists?(File.join(moduledir, ("MYMETA.yml")))
+      require "yaml"
+      metadata = YAML.load_file(File.join(moduledir, ("MYMETA.yml")))
     else
       raise FPM::InvalidPackageConfiguration, 
         "Could not find package metadata. Checked for META.json and META.yml"
@@ -73,11 +94,12 @@ class FPM::Package::CPAN < FPM::Package
     # We'll install to a temporary directory.
     @logger.info("Installing any build or configure dependencies")
 
-    if attributes[:cpan_test?]
-      safesystem(attributes[:cpan_cpanm_bin], "-L", build_path("cpan"), moduledir)
-    else
-      safesystem(attributes[:cpan_cpanm_bin], "-nL", build_path("cpan"), moduledir)
-    end
+    cpanm_flags = ["-L", build_path("cpan"), moduledir]
+    cpanm_flags += ["-n"] if attributes[:cpan_test?]
+    cpanm_flags += ["--mirror", "#{attributes[:cpan_mirror]}"] if !attributes[:cpan_mirror].nil?
+    cpanm_flags += ["--mirror-only"] if attributes[:cpan_mirror_only?] && !attributes[:cpan_mirror].nil?
+
+    safesystem(attributes[:cpan_cpanm_bin], *cpanm_flags)
 
     if !attributes[:no_auto_depends?] 
       if metadata.include?("requires") && !metadata["requires"].nil?
@@ -217,17 +239,25 @@ class FPM::Package::CPAN < FPM::Package
     return directory
   end
 
-  def download(metadata)
+  def download(metadata, cpan_version=nil)
     distribution = metadata["distribution"]
     author = metadata["author"]
     @logger.info("Downloading perl module",
                  :distribution => distribution,
-                 :version => version)
+                 :version => cpan_version)
 
     # default to latest versionunless we specify one
-    version = metadata["version"] if version.nil?
+    if cpan_version.nil?
+      self.version = metadata["version"]
+    else
+      if metadata["version"] =~ /^v\d/
+        self.version = "v#{cpan_version}"
+      else
+        self.version = cpan_version
+      end
+    end
 
-    tarball = "#{distribution}-#{version}.tar.gz"
+    tarball = "#{distribution}-#{self.version}.tar.gz"
     #url = "http://www.cpan.org/CPAN/authors/id/#{author[0,1]}/#{author[0,2]}/#{author}/#{tarball}"
     url = "http://www.cpan.org/authors/id/#{author[0,1]}/#{author[0,2]}/#{author}/#{tarball}"
     @logger.debug("Fetching perl module", :url => url)

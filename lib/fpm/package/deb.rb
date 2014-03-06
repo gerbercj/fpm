@@ -41,7 +41,7 @@ class FPM::Package::Deb < FPM::Package
   end
 
   option "--compression", "COMPRESSION", "The compression type to use, must " \
-    "be one of #{COMPRESSION_TYPES.join(", ")}.", :default => "gzip" do |value|
+    "be one of #{COMPRESSION_TYPES.join(", ")}.", :default => "gz" do |value|
     if !COMPRESSION_TYPES.include?(value)
       raise ArgumentError, "deb compression value of '#{value}' is invalid. " \
         "Must be one of #{COMPRESSION_TYPES.join(", ")}"
@@ -225,7 +225,10 @@ class FPM::Package::Deb < FPM::Package
       self.name = parse.call("Package")
       self.url = parse.call("Homepage")
       self.vendor = parse.call("Vendor") || self.vendor
-      self.provides = parse.call("Provides") || self.provides
+      with(parse.call("Provides")) do |provides_str|
+        next if provides_str.nil?
+        self.provides = provides_str.split(/\s*,\s*/)
+      end
 
       # The description field is a special flower, parse it that way.
       # The description is the first line as a normal Description field, but also continues
@@ -297,6 +300,7 @@ class FPM::Package::Deb < FPM::Package
   end # def extract_files
 
   def output(output_path)
+    self.provides = self.provides.collect { |p| fix_provides(p) }
     output_check(output_path)
     # Abort if the target path already exists.
 
@@ -324,7 +328,7 @@ class FPM::Package::Deb < FPM::Package
 
     # Tar up the staging_path into data.tar.{compression type}
     case self.attributes[:deb_compression]
-      when "gzip", nil
+      when "gz", nil
         datatar = build_path("data.tar.gz")
         compression = "-z"
       when "bzip2" 
@@ -356,7 +360,7 @@ class FPM::Package::Deb < FPM::Package
     end
 
     if attributes[:deb_changelog]
-      dest_changelog = File.join(staging_path, "usr/share/doc/#{attributes[:name]}/changelog.Debian")
+      dest_changelog = File.join(staging_path, "usr/share/doc/#{name}/changelog.Debian")
       FileUtils.mkdir_p(File.dirname(dest_changelog))
       FileUtils.cp attributes[:deb_changelog], dest_changelog
       File.chmod(0644, dest_changelog)
@@ -381,10 +385,15 @@ class FPM::Package::Deb < FPM::Package
 
     attributes.fetch(:deb_upstart_list, []).each do |upstart|
       name = File.basename(upstart, ".upstart")
-      dest_upstart = File.join(staging_path, "etc/init/#{name}.conf")
+      dest_upstart = staging_path("etc/init/#{name}.conf")
       FileUtils.mkdir_p(File.dirname(dest_upstart))
-      FileUtils.cp upstart, dest_upstart
+      FileUtils.cp(upstart, dest_upstart)
       File.chmod(0644, dest_upstart)
+
+      # Install an init.d shim that calls upstart
+      dest_init = staging_path("/etc/init.d/#{name}")
+      FileUtils.mkdir_p(File.dirname(dest_init))
+      FileUtils.ln_s("/lib/init/upstart-job", dest_init)
     end
 
     args = [ tar_cmd, "-C", staging_path, compression ] + tar_flags + [ "-cf", datatar, "." ]
@@ -397,13 +406,16 @@ class FPM::Package::Deb < FPM::Package
         safesystem("ar", "-qc", output_path, "debian-binary", "control.tar.gz", datatar)
       end
     end
-    @logger.log("Created deb package", :path => output_path)
   end # def output
 
   def converted_from(origin)
     self.dependencies = self.dependencies.collect do |dep|
       fix_dependency(dep)
     end.flatten
+    self.provides = self.provides.collect do |provides|
+      fix_provides(provides)
+    end.flatten
+      
   end # def converted_from
 
   def debianize_op(op)
@@ -435,7 +447,7 @@ class FPM::Package::Deb < FPM::Package
     end
 
     if dep.include?("_")
-      @logger.warn("Replacing underscores with dashes in '#{dep}' because " \
+      @logger.warn("Replacing dependency underscores with dashes in '#{dep}' because " \
                    "debs don't like underscores")
       dep = dep.gsub("_", "-")
     end
@@ -472,6 +484,23 @@ class FPM::Package::Deb < FPM::Package
       return dep.rstrip
     end
   end # def fix_dependency
+
+  def fix_provides(provides)
+    name_re = /^[^ \(]+/
+    name = provides[name_re]
+    if name =~ /[A-Z]/
+      @logger.warn("Downcasing provides '#{name}' because deb packages " \
+                   " don't work so good with uppercase names")
+      provides = provides.gsub(name_re) { |n| n.downcase }
+    end
+
+    if provides.include?("_")
+      @logger.warn("Replacing 'provides' underscores with dashes in '#{provides}' because " \
+                   "debs don't like underscores")
+      provides = provides.gsub("_", "-")
+    end
+    return provides.rstrip
+  end
 
   def control_path(path=nil)
     @control_path ||= build_path("control")
@@ -565,9 +594,16 @@ class FPM::Package::Deb < FPM::Package
     # scan all conf file paths for files and add them
     allconfigs = []
     config_files.each do |path|
+      # Strip leading /
+      path = path[1..-1] if path[0,1] == "/"
       cfg_path = File.expand_path(path, staging_path)
-      Find.find(cfg_path) do |p|
-        allconfigs << p.gsub("#{staging_path}/", '') if File.file? p
+      begin
+        Find.find(cfg_path) do |p|
+          allconfigs << p.gsub("#{staging_path}/", '') if File.file? p
+        end
+      rescue Errno::ENOENT => e
+        raise FPM::InvalidPackageConfiguration,
+          "Error trying to use '#{cfg_path}' as a config file in the package. Does it exist?"
       end
     end
     allconfigs.sort!.uniq!
@@ -616,6 +652,7 @@ class FPM::Package::Deb < FPM::Package
           out.puts "#{md5} #{path}"
         end
       end
+      File.chmod(0644, control_path("md5sums"))
     end
   end # def write_md5sums
 

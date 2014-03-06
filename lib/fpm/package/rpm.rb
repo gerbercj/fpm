@@ -134,14 +134,18 @@ class FPM::Package::RPM < FPM::Package
   end
 
   def rpm_file_entry(file)
+    original_file = file
     file = rpm_fix_name(file)
     return file unless attributes[:rpm_use_file_permissions?]
 
-    stat = File.stat(file.gsub(/\"/, '').sub(/^\//,''))
-    user = Etc.getpwuid(stat.uid).name
-    group = Etc.getgrgid(stat.gid).name
-    mode = stat.mode
-    return sprintf("%%attr(%o, %s, %s) %s\n", mode & 4095 , user, group, file)
+    # Stat the original filename in the relative staging path
+    ::Dir.chdir(staging_path) do
+      stat = File.stat(original_file.gsub(/\"/, '').sub(/^\//,''))
+      user = Etc.getpwuid(stat.uid).name
+      group = Etc.getgrgid(stat.gid).name
+      mode = stat.mode
+      return sprintf("%%attr(%o, %s, %s) %s\n", mode & 4095 , user, group, file)
+    end
   end
 
 
@@ -189,25 +193,23 @@ class FPM::Package::RPM < FPM::Package
       # Convert 'rubygem-foo' provides values to 'rubygem(foo)'
       # since that's what most rpm packagers seem to do.
       self.provides = self.provides.collect do |provides|
-        first, remainder = provides.split("-", 2)
-        if first == "rubygem"
-          name, remainder = remainder.split(" ", 2)
-          # yield rubygem(name)...
-          "rubygem(#{name})#{remainder ? " #{remainder}" : ""}"
+        # Tries to match rubygem_prefix [1], gem_name [2] and version [3] if present
+        # and return it in rubygem_prefix(gem_name) form
+        if name=/^(#{attributes[:gem_package_name_prefix]})-([^\s]+)\s*(.*)$/.match(provides)
+          "#{name[1]}(#{name[2]})#{name[3] ? " #{name[3]}" : ""}"
         else
           provides
         end
       end
       self.dependencies = self.dependencies.collect do |dependency|
-        first, remainder = dependency.split("-", 2)
-        if first == "rubygem"
-          name, remainder = remainder.split(" ", 2)
-          "rubygem(#{name})#{remainder ? " #{remainder}" : ""}"
+        # Tries to match rubygem_prefix [1], gem_name [2] and version [3] if present
+        # and return it in rubygem_prefix(gem_name) form
+        if name=/^(#{attributes[:gem_package_name_prefix]})-([^\s]+)\s*(.*)$/.match(dependency)
+          "#{name[1]}(#{name[2]})#{name[3] ? " #{name[3]}" : ""}"
         else
           dependency
         end
       end
-      #self.provides << "rubygem(#{self.name})"
     end
 
     # Convert != dependency as Conflict =, as rpm doesn't understand !=
@@ -219,19 +221,6 @@ class FPM::Package::RPM < FPM::Package
         dep_ok = false
       end
       dep_ok
-    end
-
-    # Convert any dashes in version strings to underscores.
-    self.dependencies = self.dependencies.collect do |dep|
-      name, op, version = dep.split(/\s+/)
-      if !version.nil? and version.include?("-")
-        @logger.warn("Dependency package '#{name}' version '#{version}' " \
-                     "includes dashes, converting to underscores")
-        version = version.gsub(/-/, "_")
-        "#{name} #{op} #{version}"
-      else
-        dep
-      end
     end
 
     # if --ignore-iteration-in-dependencies is true convert foo = X, to
@@ -338,7 +327,7 @@ class FPM::Package::RPM < FPM::Package
 
       Find.find(staging_path) do |path|
         next if path == staging_path
-        if File.directory? path
+        if File.directory? path and !File.symlink? path
           add_path = path.gsub(/^#{staging_path}/,'')
           self.directories << add_path if not fs_dirs.include? add_path
         end
@@ -348,7 +337,7 @@ class FPM::Package::RPM < FPM::Package
       alldirs = []
       self.directories.each do |path|
         Find.find(File.join(staging_path, path)) do |subpath|
-          if File.directory? subpath
+          if File.directory? subpath and !File.symlink? subpath
             alldirs << subpath.gsub(/^#{staging_path}/, '')
           end
         end
@@ -372,6 +361,13 @@ class FPM::Package::RPM < FPM::Package
       args += ["--define", define]
     end
 
+    # copy all files from staging to BUILD dir
+    Find.find(staging_path) do |path|
+      src = path.gsub(/^#{staging_path}/, '')
+      dst = File.join(build_path, build_sub_dir, src)
+      copy_entry(path, dst)
+    end
+
     rpmspec = template("rpm.erb").result(binding)
     specfile = File.join(build_path("SPECS"), "#{name}.spec")
     File.write(specfile, rpmspec)
@@ -387,8 +383,6 @@ class FPM::Package::RPM < FPM::Package
       # This should only output one rpm, should we verify this?
       FileUtils.cp(rpmpath, output_path)
     end
-
-    @logger.log("Created rpm", :path => output_path)
   end # def output
 
   def prefix
