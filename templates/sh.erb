@@ -163,8 +163,10 @@ function run_post_install(){
     if [ -r $AFTER_INSTALL ] ; then
         chmod +x $AFTER_INSTALL
         log "Running post install script"
-        log $($AFTER_INSTALL)
-        return $?
+        output=$($AFTER_INSTALL 2>&1)
+        errorlevel=$?
+        log $output
+        return $errorlevel
     fi
     return 0
 }
