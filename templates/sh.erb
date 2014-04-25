@@ -198,7 +198,7 @@ function revert_symlinks(){
 function clean_out_old_releases(){
     [ -n "$USE_FLAT_RELEASE_DIRECTORY" ] && return
 
-    while [ $(ls -tr "${RELEASES_DIR}" | wc -l) -gt 2 ] ; do
+    while [ $(ls -tr "${RELEASES_DIR}" | wc -l) -gt 4 ] ; do
         OLDEST_RELEASE=$(ls -tr "${RELEASES_DIR}" | head -1)
         log "Deleting old release '${OLDEST_RELEASE}'"
         rm -rf "${RELEASES_DIR}/${OLDEST_RELEASE}"
