@@ -111,6 +111,23 @@ describe FPM::Package::RPM do
   end
 
   describe "#output", :if => program_exists?("rpmbuild") do
+    context "architecture" do
+      it "can be basically anything" do
+        subject.name = "example"
+        subject.architecture = "fancypants"
+        subject.version = "1.0"
+        target = Stud::Temporary.pathname
+
+        # Should not fail.
+        subject.output(target)
+
+        # Verify the arch tag.
+        rpm = ::RPM::File.new(target)
+        insist { rpm.tags[:arch] } == subject.architecture
+
+        File.unlink(target)
+      end
+    end
     context "package attributes" do
       before :each do
         @target = Stud::Temporary.pathname
@@ -391,6 +408,40 @@ describe FPM::Package::RPM do
       insist { rpmtags[:release] } == "1"
     end
   end # regression stuff
+
+  describe "rpm_use_file_permissions" do
+    let(:target) { Stud::Temporary.pathname }
+    let(:rpm) { ::RPM::File.new(target) }
+    let(:path) { "hello.txt" }
+    let(:path_stat) { File.lstat(subject.staging_path(path)) }
+
+    before :each do
+      File.write(subject.staging_path(path), "Hello world")
+      subject.name = "example"
+      subject.version = "1.0"
+    end
+
+    after :each do
+      subject.cleanup
+      File.delete(target) rescue nil
+    end
+
+    it "should respect file user and group ownership", :if => program_exists?("rpmbuild") do
+      subject.attributes[:rpm_use_file_permissions?] = true
+      subject.output(target)
+      insist { rpm.tags[:fileusername].first } == Etc.getpwuid(path_stat.uid).name
+      insist { rpm.tags[:filegroupname].first } == Etc.getgrgid(path_stat.gid).name
+    end
+
+    it "rpm_group should override rpm_use_file_permissions-derived owner", :if => program_exists?("rpmbuild") do
+      subject.attributes[:rpm_use_file_permissions?] = true
+      subject.attributes[:rpm_user] = "hello"
+      subject.attributes[:rpm_group] = "world"
+      subject.output(target)
+      insist { rpm.tags[:fileusername].first } == subject.attributes[:rpm_user]
+      insist { rpm.tags[:filegroupname].first } == subject.attributes[:rpm_group]
+    end
+  end
 
   describe "#output with digest and compression settings", :if => program_exists?("rpmbuild") do
     context "bzip2/sha1" do

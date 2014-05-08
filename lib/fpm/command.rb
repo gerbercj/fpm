@@ -101,7 +101,8 @@ class FPM::Command < Clamp::Command
   option "--config-files", "CONFIG_FILES",
     "Mark a file in the package as being a config file. This uses 'conffiles'" \
     " in debs and %config in rpm. If you have multiple files to mark as " \
-    "configuration files, specify this flag multiple times.",
+    "configuration files, specify this flag multiple times.  If argument is " \
+    "directory all files inside it will be recursively marked as config files.",
     :multivalued => true, :attribute_name => :config_files
   option "--directories", "DIRECTORIES", "Recursively mark a directory as being owned " \
     "by the package", :multivalued => true, :attribute_name => :directories
@@ -217,6 +218,12 @@ class FPM::Command < Clamp::Command
 
   # Execute this command. See Clamp::Command#execute and Clamp's documentation
   def execute
+    # Short-circuit if someone simply runs `fpm --version`
+    if ARGV == [ "--version" ]
+      puts FPM::VERSION
+      return 0
+    end
+
     @logger.level = :warn
 
     if (stray_flags = args.grep(/^-/); stray_flags.any?)
@@ -385,7 +392,15 @@ class FPM::Command < Clamp::Command
 
     # Write the output somewhere, package can be nil if no --package is specified, 
     # and that's OK.
-    package_file = output.to_s(package)
+    
+    # If the package output (-p flag) is a directory, write to the default file name
+    # but inside that directory.
+    if ! package.nil? && File.directory?(package)
+      package_file = File.join(package, output.to_s)
+    else
+      package_file = output.to_s(package)
+    end
+
     begin
       output.output(package_file)
     rescue FPM::Package::FileAlreadyExists => e

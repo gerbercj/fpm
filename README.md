@@ -1,4 +1,4 @@
-# Effing Package Management.
+# Effing Package Management
 
 ## Preface
 
@@ -61,6 +61,13 @@ The goal of FPM is to be able to easily build platform-native packages.
 * Creating packages easily (deb, rpm, etc)
 * Tweaking existing packages (removing files, changing metadata/dependencies)
 * Stripping pre/post/maintainer scripts from packages
+
+## System packages
+You will need the ruby-dev packages for your system. These can be installed with the below
+
+    apt-get install ruby-dev
+    
+    yum install ruby-devel
 
 ## Get with the download
 
