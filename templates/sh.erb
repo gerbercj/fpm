@@ -21,31 +21,50 @@ set -e
 function main() {
     set_install_dir
 
-    create_pid
+    if ! slug_already_current ; then
 
-    wait_for_others
+      create_pid
+      wait_for_others
+      kill_others
+      set_owner
+      unpack_payload
 
-    kill_others
+      if [ "$UNPACK_ONLY" == "1" ] ; then
+          echo "Unpacking complete, not moving symlinks or restarting because unpack only was specified."
+      else
+          create_symlinks
 
-    set_owner
+          set +e # don't exit on errors to allow us to clean up
+          if ! run_post_install ; then
+              revert_symlinks
+              log "Installation failed."
+              exit 1
+          else
+              clean_out_old_releases
+              log "Installation complete."
+          fi
+      fi
 
-    unpack_payload
-
-    if [ "$UNPACK_ONLY" == "1" ] ; then
-        echo "Unpacking complete, not moving symlinks or restarting because unpack only was specified."
     else
-        create_symlinks
-
-        set +e # don't exit on errors to allow us to clean up
-        if ! run_post_install ; then
-            revert_symlinks
-            log "Installation failed."
-            exit 1
-        else
-            clean_out_old_releases
-            log "Installation complete."
-        fi
+        echo "This slug is already installed in 'current'. Specify -f to force reinstall. Exiting."
     fi
+}
+
+# check if this slug is already running and exit unless `force` specified
+function slug_already_current(){
+    if [ "$FORCE" == "1" ] ; then
+        log "Force was specified. Proceeding with install."
+        return 1;
+    fi
+
+    local this_slug=$(basename $0 .slug)
+    local current=$(basename $(readlink ${INSTALL_ROOT}/current))
+    log "'current' symlink points to slug: ${current}"
+
+    if [ "$this_slug" == "$current" ] ; then
+        return 0;
+    fi
+    return 1;
 }
 
 # deletes the PID file for this installation
