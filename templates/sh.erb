@@ -53,7 +53,18 @@ function main() {
 # check if this slug is already running and exit unless `force` specified
 function slug_already_current(){
     if [ "$FORCE" == "1" ] ; then
-        log "Force was specified. Proceeding with install."
+        log "Force was specified. Checking for existing running service."
+
+        if which stop > /dev/null 2>&1 ; then
+            local project_name=$(basename $INSTALL_ROOT)
+            log "Trying to stop currently running service."
+            # If stop fails for any reason, ignore so that we don't die horribly (see set -e above)
+            log $(stop ${project_name} || true)
+        else
+            log "Could not find the upstart commands, so not trying to stop the service."
+        fi
+
+        log "Proceeding with install."
         return 1;
     fi
 
